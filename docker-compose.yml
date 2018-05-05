@@ -1,0 +1,8 @@
+version: '3'
+
+services:
+  mycore:
+    image: mycore
+    build:
+      context: .
+      dockerfile: MyCore/Dockerfile
