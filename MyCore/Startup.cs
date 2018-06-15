@@ -1,10 +1,12 @@
 ﻿using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Formatters;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using MyCore.AppFunc;
+using MyCore.ElasticSearch;
 using MyCoreDAL;
 
 namespace MyCore
@@ -23,21 +25,29 @@ namespace MyCore
 
         public void ConfigureServices(IServiceCollection services)
         {
+            services.AddOptions();
+            services.Configure<ESOptions>(Configuration.GetSection("ElasticSearch"));
+
             services.AddDbContext<DataContext>(
                 options => options.UseMySQL(Configuration.GetConnectionString("DataConnection")));
 
-            services.AddMvc().
-                   AddJsonOptions(
-                   options =>
-                   {
-                       options.SerializerSettings.ReferenceLoopHandling = Newtonsoft.Json.ReferenceLoopHandling.Ignore;
-                       options.SerializerSettings.DateFormatString = "yyyy-MM-dd HH:mm:ss";
-                   }).
-                   AddMvcOptions(
-                   options =>
-                   {
-                       options.OutputFormatters.Add(new XmlDataContractSerializerOutputFormatter());
-                   });
+            services.AddMvc(
+                options => options.InputFormatters.Insert(0, new HandleRequestBodyFormatter())
+                ).
+                AddJsonOptions(
+                options =>
+                {
+                    options.SerializerSettings.ReferenceLoopHandling = Newtonsoft.Json.ReferenceLoopHandling.Ignore;
+                    options.SerializerSettings.DateFormatString = "yyyy-MM-dd HH:mm:ss";
+                }).
+                AddMvcOptions(
+                options =>
+                {
+                    options.OutputFormatters.Add(new XmlDataContractSerializerOutputFormatter());
+                });
+
+            //services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
+            //services.AddSingleton<ESClientProvider>();
 
             services.AddIdentityServer()
                 .AddDeveloperSigningCredential()

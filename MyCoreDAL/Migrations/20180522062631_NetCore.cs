@@ -4,7 +4,7 @@ using System.Collections.Generic;
 
 namespace MyCoreDAL.Migrations
 {
-    public partial class NetCore1 : Migration
+    public partial class NetCore : Migration
     {
         protected override void Up(MigrationBuilder migrationBuilder)
         {

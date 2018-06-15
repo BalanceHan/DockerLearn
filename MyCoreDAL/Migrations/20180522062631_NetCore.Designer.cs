@@ -10,8 +10,8 @@ using System;
 namespace MyCoreDAL.Migrations
 {
     [DbContext(typeof(DataContext))]
-    [Migration("20180408094208_NetCore1")]
-    partial class NetCore1
+    [Migration("20180522062631_NetCore")]
+    partial class NetCore
     {
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
