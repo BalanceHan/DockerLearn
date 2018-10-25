@@ -13,7 +13,7 @@ namespace MyCore.Controllers
 {
     public class TestController : Controller
     {
-        private DataContext context;
+        private readonly DataContext context;
         private OrmHelp help;
         public TestController(DataContext dataContext)
         {
@@ -21,6 +21,10 @@ namespace MyCore.Controllers
             help = new OrmHelp(dataContext);
         }
 
+        /// <summary>
+        /// jenkins测试
+        /// </summary>
+        /// <returns></returns>
         [HttpGet]
         [Route("api/test")]
         public IActionResult Get()
