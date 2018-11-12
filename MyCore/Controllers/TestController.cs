@@ -11,6 +11,7 @@ using MyCoreDAL;
 
 namespace MyCore.Controllers
 {
+    [Route("api/[controller]")]
     public class TestController : Controller
     {
         private readonly DataContext context;
@@ -26,10 +27,19 @@ namespace MyCore.Controllers
         /// </summary>
         /// <returns></returns>
         [HttpGet]
-        [Route("api/test")]
         public IActionResult Get()
         {
             return Ok(help.SelectAllDescDate<Customer>(s => s.AdditionDate));
+        }
+
+        [HttpGet("data")]
+        public IActionResult GetTest()
+        {
+            DateTime date = Convert.ToDateTime("2018-11-07 14:00:05");
+            DateTime dt = Convert.ToDateTime("2018-11-07 13:09:13");
+            var hh = dt - date;
+            var han = DateTime.Now.ToString("yyyy年MM月dd日 HH:mm:ss");
+            return Ok(han);
         }
     }
 }
