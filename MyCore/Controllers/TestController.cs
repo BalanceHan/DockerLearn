@@ -39,7 +39,7 @@ namespace MyCore.Controllers
             DateTime dt = Convert.ToDateTime("2018-11-07 13:09:13");
             var hh = dt - date;
             var han = DateTime.Now.ToString("yyyy年MM月dd日 HH:mm:ss");
-            return Ok(han);
+            return Ok(GetType().Assembly.GetName().Version.ToString());
         }
     }
 }
