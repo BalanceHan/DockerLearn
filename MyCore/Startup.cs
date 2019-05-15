@@ -8,16 +8,24 @@ using Microsoft.Extensions.DependencyInjection;
 using MyCore.AppFunc;
 using MyCore.ElasticSearch;
 using MyCoreDAL;
+using SimplePatch;
 
 namespace MyCore
 {
     public class Startup
     {
         // This method gets called by the runtime. Use this method to add services to the container.
-        // For more information on how to configure your application, visit https://go.microsoft.com/fwlink/?LinkID=398940
+        // For more information on how to configure your application, visit https://go.microsoft.com/fwlink/?LinkID=398940        
 
         public Startup(IConfiguration configuration)
         {
+            DeltaConfig.Init(options =>
+            {
+                options.AddEntity<Customer>();
+                options.AddEntity<CustomerAddress>();
+                options.IgnoreLetterCase();
+            });
+
             Configuration = configuration;
         }
 

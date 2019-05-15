@@ -3,12 +3,12 @@ using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Text;
+using MyCoreDAL.FatherEntity;
 
 namespace MyCoreDAL
 {
-    public class CustomerAddress : FartherEntity
+    public class CustomerAddress : FatherEntitys
     {
-        //[DatabaseGenerated(DatabaseGeneratedOption.Identity)]
         public int ID { get; set; }
 
         [ForeignKey("Customer")]
@@ -16,7 +16,7 @@ namespace MyCoreDAL
         public string CustomerGuid { get; set; }
 
         [StringLength(50)]
-        public string AddressGuid { get; set; }
+        public string AddressGuid { get; set; } = Guid.NewGuid().ToString().Replace("-", "");
 
         [StringLength(50)]
         public string Province { get; set; }

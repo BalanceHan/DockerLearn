@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNet.OData;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using MyCoreBLL;
 using MyCoreDAL;
@@ -16,12 +17,12 @@ namespace MyCore.Controllers
     [Route("api/[controller]")]
     public class ThreadController : Controller
     {
-        private DataContext context;
-        private OrmHelp help;
-        public ThreadController(DataContext dataContext)
+        private readonly DataContext context;
+        private readonly OrmHelp help;
+        public ThreadController(DataContext dataContext, IHttpContextAccessor http)
         {
             context = dataContext;
-            help = new OrmHelp(dataContext);
+            help = new OrmHelp(dataContext, http);
         }
 
         [HttpGet("delete")]
@@ -41,7 +42,7 @@ namespace MyCore.Controllers
 
             var searchResponse = client.Search<Customer>(s => s.From(0).Size(10).Query(q => q.MatchPhrase(m => m.Field(f => f.CustomerName).Query(value))));
             var people = searchResponse.Documents.ToList();
-            return Ok(help.GetFormat(people));
+            return Ok(1);
         }
 
         [HttpPost]
@@ -57,25 +58,25 @@ namespace MyCore.Controllers
         }
 
         [HttpPut("{value}")]
-        public async Task<IActionResult> PutThread(string value, [FromBody]Delta<Customer> delta)
+        public IActionResult PutThread(string value)
         {
-            var settings = new ConnectionSettings(new Uri("http://elasticsearch:9200")).DefaultIndex("default");
-            var client = new ElasticClient(settings);
-            await help.UpdateAsync(s => s.CustomerGuid == value, delta);
-            var item = await help.SelectFirstAsync<Customer>(s => s.CustomerGuid == value);
-            DocumentPath<Customer> document = new DocumentPath<Customer>(value);
-            await client.UpdateAsync(document, (s) => s.Doc(item));
-            return Ok(1);
+            //var settings = new ConnectionSettings(new Uri("http://elasticsearch:9200")).DefaultIndex("default");
+            //var client = new ElasticClient(settings);
+            //await help.UpdateAsync(s => s.CustomerGuid == value, delta);
+            //var item = await help.SelectFirstAsync<Customer>(s => s.CustomerGuid == value);
+            //DocumentPath<Customer> document = new DocumentPath<Customer>(value);
+            //await client.UpdateAsync(document, (s) => s.Doc(item));
+            return Ok(value);
         }
 
         [HttpDelete("{value}")]
-        public async Task<IActionResult> DeleteThread(string value)
+        public IActionResult DeleteThread(string value)
         {
-            var settings = new ConnectionSettings(new Uri("http://elasticsearch:9200")).DefaultIndex("default");
-            var client = new ElasticClient(settings);
-            DocumentPath<Customer> document = new DocumentPath<Customer>(value);
-            client.Delete(document);
-            return Ok(await help.DeleteConditionAsync<Customer>(s => s.CustomerGuid == value));
+            //var settings = new ConnectionSettings(new Uri("http://elasticsearch:9200")).DefaultIndex("default");
+            //var client = new ElasticClient(settings);
+            //DocumentPath<Customer> document = new DocumentPath<Customer>(value);
+            //client.Delete(document);
+            return Ok(value);
         }
     }
 }

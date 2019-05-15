@@ -1,406 +1,228 @@
-﻿using Microsoft.AspNet.OData;
-using Microsoft.EntityFrameworkCore;
-using MyCoreDAL;
-using System;
+﻿using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Linq.Expressions;
-using System.Text;
-using System.Threading.Tasks;
+using System.Reflection;
+using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Http;
+using MyCoreBLL.FieldFile;
+using MyCoreDAL;
 
 namespace MyCoreBLL
 {
     public class OrmHelp
     {
         private readonly DataContext _context;
+        private readonly IHttpContextAccessor _http;
 
-        public OrmHelp(DataContext context)
+        public OrmHelp(DataContext context, IHttpContextAccessor http)
         {
             _context = context;
+            _http = http;
         }
 
-        public class ReturnType<T>
+        public IQueryable SelectDynamic<T>(IQueryable<T> queryable, FiltrateField value) where T : class
         {
-            public int ErrCode { get; set; }
-
-            public string ErrMsg { get; set; }
-
-            public List<T> Data { get; set; }
-        }
-
-        public class ReturnTypeStr<T>
-        {
-            public int ErrCode { get; set; }
-
-            public string ErrMsg { get; set; }
-
-            public string Data { get; set; }
-        }
-
-        /// <summary>
-        /// 查询(返回所有数据按ID降序排序)
-        /// </summary>
-        /// <typeparam name="T">泛型</typeparam>
-        /// <param name="express">表达式</param>
-        /// <returns></returns>
-        public ReturnType<T> SelectAllDescID<T>(Expression<Func<T, int>> express) where T : class
-        {
-            ReturnType<T> Msg = new ReturnType<T>();
-            var item = _context.Set<T>().AsNoTracking().OrderByDescending(express).ToList();
-            if (item.FirstOrDefault() != null)
+            List<string> list = new List<string>();
+            if (value.Fields != null)
             {
-                Msg.ErrCode = 0;
-                Msg.ErrMsg = "success";
-                Msg.Data = item;
-                return Msg;
+                var strArr = value.Fields.Split(',');
+                for (int i = 0; i < strArr.Length; i++)
+                {
+                    list.Add(strArr[i]);
+                }
             }
-            Msg.ErrCode = 10001;
-            Msg.ErrMsg = "暂无数据";
-            return Msg;
-        }
-
-        /// <summary>
-        /// 查询(返回所有数据按时间降序排序)
-        /// </summary>
-        /// <typeparam name="T">泛型</typeparam>
-        /// <param name="express">表达式</param>
-        /// <returns></returns>
-        public ReturnType<T> SelectAllDescDate<T>(Expression<Func<T, DateTime?>> express) where T : class
-        {
-            ReturnType<T> Msg = new ReturnType<T>();
-            var item = _context.Set<T>().AsNoTracking().OrderByDescending(express).ToList();
-            if (item.FirstOrDefault() != null)
+            else
             {
-                Msg.ErrCode = 0;
-                Msg.ErrMsg = "success";
-                Msg.Data = item;
-                return Msg;
+                foreach (var current in queryable)
+                {
+                    var properties = current.GetType().GetProperties();
+                    foreach (var property in properties)
+                    {
+                        list.Add(property.Name);
+                    }
+                    break;
+                }
             }
-            Msg.ErrCode = 10001;
-            Msg.ErrMsg = "暂无数据";
-            return Msg;
-        }
+            //字典存储字段名称及属性
+            Dictionary<string, PropertyInfo> sourceProperties = list.ToDictionary(name => name, name => queryable.ElementType.GetProperty(name, BindingFlags.IgnoreCase | BindingFlags.Public | BindingFlags.Instance), StringComparer.OrdinalIgnoreCase);
+            Type dynamicType = LinqRuntimeTypeBuilder.GetDynamicType(sourceProperties.Values);
+            ParameterExpression sourceItem = Expression.Parameter(queryable.ElementType, "s");
+            IEnumerable<MemberBinding> bindings = dynamicType.GetFields().Select(s => Expression.Bind(s, Expression.Property(sourceItem, sourceProperties[s.Name]))).OfType<MemberBinding>();
 
-        /// <summary>
-        /// 查询(返回第一条数据)
-        /// </summary>
-        /// <typeparam name="T">泛型</typeparam>
-        /// <param name="express">表达式</param>
-        /// <returns></returns>
-        public async Task<T> SelectFirstAsync<T>(Expression<Func<T, bool>> express) where T : class
-        {
-            var item = await _context.Set<T>().FirstOrDefaultAsync(express);
-            if (item != null)
+            Expression selector = Expression.Lambda(Expression.MemberInit(
+                Expression.New(dynamicType.GetConstructor(Type.EmptyTypes)),
+                bindings),
+                sourceItem
+                );
+
+            TextInfo textInfo = new CultureInfo("en-US", false).TextInfo;
+            string strSort = textInfo.ToTitleCase(value.Sort);
+
+            Expression left = Expression.Property(sourceItem, queryable.ElementType.GetProperty("IsDelete"));
+            Expression right = Expression.Constant(true, typeof(bool?));
+            Expression expressionOne = Expression.NotEqual(left, right);
+            Expression expression = expressionOne;
+
+            if (value.Where != null)
             {
-                return item;
+                List<Expression> pairs = new List<Expression>();
+                Expression expressionTwo = expression;
+                string strField = Regex.Replace(textInfo.ToTitleCase(value.Where), @"\(|\)", "");
+                if (strField.ToLower().Contains("~or") || strField.ToLower().Contains("~and"))
+                {
+                    var strNotJoint = Regex.Replace(strField, @"~or|~and", "~", RegexOptions.IgnoreCase);
+                    var strFieldArrs = strNotJoint.Split('~');
+                    for (int i = 0; i < strFieldArrs.Length; i++)
+                    {
+                        var strFieldInfo = strFieldArrs[i].Split(',');
+                        var typeFieldInfo = queryable.ElementType.GetProperty(strFieldInfo[0], BindingFlags.IgnoreCase | BindingFlags.Public | BindingFlags.Instance);
+                        left = Expression.Property(sourceItem, typeFieldInfo);
+                        var strType = typeFieldInfo.PropertyType;
+                        right = Expression.Constant(FieldRuntimeTypeBuilder.ChangeType(strFieldInfo[2].ToLower(), strType), strType);
+                        switch (strFieldInfo[1].ToLower())
+                        {
+                            case "is":
+                                pairs.Add(Expression.Equal(left, right));
+                                break;
+                            case "eq":
+                                pairs.Add(Expression.Equal(left, right));
+                                break;
+                            case "ne":
+                                pairs.Add(Expression.NotEqual(left, right));
+                                break;
+                            case "gt":
+                                pairs.Add(Expression.GreaterThan(left, right));
+                                break;
+                            case "gte":
+                                pairs.Add(Expression.GreaterThanOrEqual(left, right));
+                                break;
+                            case "lt":
+                                pairs.Add(Expression.LessThan(left, right));
+                                break;
+                            case "lte":
+                                pairs.Add(Expression.LessThanOrEqual(left, right));
+                                break;
+                            case "bw":
+                                pairs.Add(Expression.Equal(left, right));
+                                break;
+                        }
+                    }
+                    var expressResult = pairs.Skip(1).Aggregate(pairs[0], Expression.And);
+
+                    expression = Expression.And(expressionTwo, expressResult);
+                }
+                else
+                {
+                    var strFieldInfo = strField.Split(',');
+                    var typeFieldInfo = queryable.ElementType.GetProperty(strFieldInfo[0], BindingFlags.IgnoreCase | BindingFlags.Public | BindingFlags.Instance);
+                    left = Expression.Property(sourceItem, typeFieldInfo);
+                    var strType = typeFieldInfo.PropertyType;
+                    right = Expression.Constant(FieldRuntimeTypeBuilder.ChangeType(strFieldInfo[2].ToLower(), strType), strType);
+                    switch (strFieldInfo[1].ToLower())
+                    {
+                        case "is":
+                            expression = Expression.Equal(left, right);
+                            break;
+                        case "eq":
+                            expression = Expression.Equal(left, right);
+                            break;
+                        case "ne":
+                            expression = Expression.NotEqual(left, right);
+                            break;
+                        case "gt":
+                            expression = Expression.GreaterThan(left, right);
+                            break;
+                        case "gte":
+                            expression = Expression.GreaterThanOrEqual(left, right);
+                            break;
+                        case "lt":
+                            expression = Expression.LessThan(left, right);
+                            break;
+                        case "lte":
+                            expression = Expression.LessThanOrEqual(left, right);
+                            break;
+                        case "in":
+                            for (int i = 2; i < strFieldInfo.Length; i++)
+                            {
+                                pairs.Add(Expression.Equal(left, Expression.Constant(FieldRuntimeTypeBuilder.ChangeType(strFieldInfo[i].ToLower(), strType), strType)));
+                            }
+                            var expressResult = pairs.Skip(1).Aggregate(pairs[0], Expression.Or);
+                            expression = Expression.And(expressionTwo, expressResult);
+                            break;
+                    }
+                }
             }
-            return null;
-        }
 
-        /// <summary>
-        /// 查询(主键查询)
-        /// </summary>
-        /// <typeparam name="T">泛型</typeparam>
-        /// <param name="id">主键ID</param>
-        /// <returns></returns>
-        public async Task<T> SelectIdAsync<T>(dynamic id) where T : class
-        {
-            var item = await _context.Set<T>().FindAsync(id);
-            if (item != null)
+            Dictionary<string, object> valuePairs = new Dictionary<string, object>();
+            if (value.Contain != null)
             {
-                return item;
+                List<Expression> pairs = new List<Expression>();
+                string strField = Regex.Replace(textInfo.ToTitleCase(value.Contain), @"\(|\)", "");
+                var strFieldArrs = strField.Split('~');
+                for (int i = 0; i < strFieldArrs.Length; i++)
+                {
+                    var strFieldInfo = strFieldArrs[i].Split(',');
+                    var typeFieldInfo = queryable.ElementType.GetProperty(strFieldInfo[0], BindingFlags.IgnoreCase | BindingFlags.Public | BindingFlags.Instance);
+                    valuePairs.Add(strFieldInfo[0], strFieldInfo[1].ToLower());
+                }
+                var expressionContains = valuePairs.Select(propName => Expression.Call(
+                    Expression.Call(
+                        Expression.Coalesce(Expression.Property(sourceItem, propName.Key), Expression.Constant("", typeof(string))),
+                        "ToLower",
+                        Type.EmptyTypes),
+                    "Contains",
+                    Type.EmptyTypes,
+                    Expression.Constant(propName.Value))).Cast<Expression>().ToList();
+
+                var expressResult = expressionContains.Skip(1).Aggregate(expressionContains[0], Expression.And);
+
+                expression = Expression.And(expression, expressResult);
             }
-            return null;
-        }
 
-        /// <summary>
-        /// 查询(List类型返回条件数据)
-        /// </summary>
-        /// <typeparam name="T">泛型</typeparam>
-        /// <param name="express">表达式</param>
-        /// <returns></returns>
-        public List<T> SelectList<T>(Expression<Func<T, bool>> express) where T : class
-        {
-            var item = _context.Set<T>().Where(express).ToList();
-            if (item.FirstOrDefault() != null)
+            var typeSort = queryable.ElementType.GetProperty(strSort, BindingFlags.IgnoreCase | BindingFlags.Public | BindingFlags.Instance);
+            Expression propertyExpr = Expression.Property(sourceItem, typeSort);
+
+            MethodCallExpression WhereCallExpression = Expression.Call(
+                typeof(Queryable),
+                "Where",
+                new Type[] { queryable.ElementType },
+                queryable.Expression,
+                Expression.Lambda(expression, new ParameterExpression[] { sourceItem }));
+
+            MethodCallExpression OrderByCallExpression = Expression.Call(
+                typeof(Queryable),
+                "OrderByDescending",
+                new Type[] { queryable.ElementType, typeSort.PropertyType },
+                WhereCallExpression,
+                Expression.Lambda(propertyExpr, sourceItem)
+                );
+
+            var SelectCallExpression = Expression.Call(
+                typeof(Queryable),
+                "select",
+                new Type[] { queryable.ElementType, dynamicType },
+                OrderByCallExpression,
+                Expression.Quote(selector)
+                );
+
+            var results = queryable.Provider.CreateQuery<T>(SelectCallExpression);
+            int intCount = results.Count();
+            if (value.Size > 0)
             {
-                return item;
+                results = queryable.Provider.CreateQuery<T>(SelectCallExpression).Skip(value.P * value.Size).Take(value.Size);
+                int intPage = intCount / value.Size;
+                _http.HttpContext.Response.Headers.Add("x-data-page", intPage.ToString());
+                _http.HttpContext.Response.Headers.Add("x-data-page-size", value.Size.ToString());
             }
-            return null;
-        }
-
-        /// <summary>
-        /// 查询(List类型返回所有数据)
-        /// </summary>
-        /// <typeparam name="T">泛型</typeparam>
-        /// <returns></returns>
-        public List<T> SelectAllList<T>() where T : class
-        {
-            var item = _context.Set<T>().ToList();
-            if (item.FirstOrDefault() != null)
+            else
             {
-                return item;
+                _http.HttpContext.Response.Headers.Add("x-data-page", "0");
+                _http.HttpContext.Response.Headers.Add("x-data-page-size", intCount.ToString());
             }
-            return null;
-        }
-
-        /// <summary>
-        /// 查询(where语句条件查询)
-        /// </summary>
-        /// <typeparam name="T">泛型</typeparam>
-        /// <param name="express">表达式</param>
-        /// <returns></returns>
-        public ReturnType<T> SelectCondition<T>(Expression<Func<T, bool>> express) where T : class
-        {
-            ReturnType<T> Msg = new ReturnType<T>();
-            var item = _context.Set<T>().AsNoTracking().Where(express).ToList();
-            if (item.FirstOrDefault() != null)
-            {
-                Msg.ErrCode = 0;
-                Msg.ErrMsg = "success";
-                Msg.Data = item;
-                return Msg;
-            }
-            Msg.ErrCode = 10001;
-            Msg.ErrMsg = "暂无数据";
-            return Msg;
-        }
-
-        /// <summary>
-        /// 查询(where语句条件查询并按时间排序)
-        /// </summary>
-        /// <typeparam name="T">泛型</typeparam>
-        /// <param name="express">表达式</param>
-        /// <param name="desc">表达式</param>
-        /// <returns></returns>
-        public ReturnType<T> SelectConditionDesc<T>(Expression<Func<T, bool>> express, Expression<Func<T, DateTime?>> desc) where T : class
-        {
-            ReturnType<T> Msg = new ReturnType<T>();
-            var item = _context.Set<T>().AsNoTracking().Where(express).OrderByDescending(desc).ToList();
-            if (item.FirstOrDefault() != null)
-            {
-                Msg.ErrCode = 0;
-                Msg.ErrMsg = "success";
-                Msg.Data = item;
-                return Msg;
-            }
-            Msg.ErrCode = 10001;
-            Msg.ErrMsg = "暂无数据";
-            return Msg;
-        }
-
-        /// <summary>
-        /// 数据删除(根据主键删除)
-        /// </summary>
-        /// <typeparam name="T">泛型</typeparam>
-        /// <param name="id">主键ID</param>
-        /// <returns></returns>
-        public async Task<ReturnType<T>> DeleteIdAsync<T>(dynamic id) where T : class
-        {
-            ReturnType<T> Msg = new ReturnType<T>();
-            var item = await _context.Set<T>().FindAsync(id);
-            if (item == null)
-            {
-                Msg.ErrCode = 10001;
-                Msg.ErrMsg = "未查询到数据，无法删除！";
-                return Msg;
-            }
-            _context.Set<T>().Remove(item);
-            await _context.SaveChangesAsync();
-            Msg.ErrCode = 0;
-            Msg.ErrMsg = "success";
-            return Msg;
-        }
-
-        /// <summary>
-        /// 数据删除(条件删除)
-        /// </summary>
-        /// <typeparam name="T">泛型</typeparam>
-        /// <param name="express">表达式</param>
-        /// <returns></returns>
-        public async Task<ReturnType<T>> DeleteConditionAsync<T>(Expression<Func<T, bool>> express) where T : class
-        {
-            ReturnType<T> Msg = new ReturnType<T>();
-            var item = await _context.Set<T>().FirstOrDefaultAsync(express);
-            if (item == null)
-            {
-                Msg.ErrCode = 10001;
-                Msg.ErrMsg = "未查询到数据，无法删除！";
-                return Msg;
-            }
-            _context.Set<T>().Remove(item);
-            await _context.SaveChangesAsync();
-            Msg.ErrCode = 0;
-            Msg.ErrMsg = "success";
-            return Msg;
-        }
-
-        /// <summary>
-        /// 数据删除(删除所有符合条件数据)
-        /// </summary>
-        /// <typeparam name="T">泛型</typeparam>
-        /// <param name="express">表达式</param>
-        /// <returns></returns>
-        public async Task<ReturnType<T>> DeleteAllAsync<T>(Expression<Func<T, bool>> express) where T : class
-        {
-            ReturnType<T> Msg = new ReturnType<T>();
-            var item = _context.Set<T>().Where(express);
-            foreach (var info in item)
-            {
-                _context.Set<T>().Remove(info);
-            }
-            await _context.SaveChangesAsync();
-            Msg.ErrCode = 0;
-            Msg.ErrMsg = "success";
-            return Msg;
-        }
-
-        /// <summary>
-        /// 数据添加(无数据返回添加)
-        /// </summary>
-        /// <typeparam name="T">泛型</typeparam>
-        /// <param name="value">数据集合</param>
-        /// <returns></returns>
-        public async Task<ReturnType<T>> InsertDateAsync<T>(T value) where T : class
-        {
-            ReturnType<T> Msg = new ReturnType<T>();
-            await _context.Set<T>().AddAsync(value);
-            await _context.SaveChangesAsync();
-            Msg.ErrCode = 0;
-            Msg.ErrMsg = "success";
-            return Msg;
-        }
-
-        /// <summary>
-        /// 数据添加(所有数据返回)
-        /// </summary>
-        /// <typeparam name="T">泛型</typeparam>
-        /// <param name="value">数据集合</param>
-        /// <returns></returns>
-        public async Task<ReturnType<T>> InsertReturnAsync<T>(T value) where T : class
-        {
-            ReturnType<T> Msg = new ReturnType<T>();
-            await _context.Set<T>().AddAsync(value);
-            await _context.SaveChangesAsync();
-
-            var info = _context.Set<T>().ToList();
-            Msg.ErrCode = 0;
-            Msg.ErrMsg = "success";
-            Msg.Data = info;
-            return Msg;
-        }
-
-        /// <summary>
-        /// 数据添加(指定条件数据返回)
-        /// </summary>
-        /// <typeparam name="T">泛型</typeparam>
-        /// <param name="value">数据集合</param>
-        /// <param name="express">表达式</param>
-        /// <returns></returns>
-        public async Task<ReturnType<T>> InsertConditionAsync<T>(T value, Expression<Func<T, bool>> express) where T : class
-        {
-            ReturnType<T> Msg = new ReturnType<T>();
-            await _context.Set<T>().AddAsync(value);
-            await _context.SaveChangesAsync();
-
-            var info = _context.Set<T>().Where(express).ToList();
-            Msg.ErrCode = 0;
-            Msg.ErrMsg = "success";
-            Msg.Data = info;
-            return Msg;
-        }
-
-        /// <summary>
-        /// 数据添加(返回新增数据)
-        /// </summary>
-        /// <typeparam name="T">泛型</typeparam>
-        /// <param name="value">数据集合</param>
-        /// <param name="express">表达式</param>
-        /// <returns></returns>
-        public async Task<T> InsertFirstAsync<T>(T value, Expression<Func<T, bool>> express) where T : class
-        {
-            ReturnType<T> Msg = new ReturnType<T>();
-            await _context.Set<T>().AddAsync(value);
-            await _context.SaveChangesAsync();
-
-            var info = await _context.Set<T>().FirstOrDefaultAsync(express);
-            return info;
-        }
-
-        /// <summary>
-        /// 数据更新
-        /// </summary>
-        /// <typeparam name="T">泛型</typeparam>
-        /// <param name="value">数据集合</param>
-        /// <param name="express">表达式</param>
-        /// <returns></returns>
-        public async Task<ReturnType<T>> UpdateAsync<T>(Expression<Func<T, bool>> express, Delta<T> data) where T : class
-        {
-            ReturnType<T> Msg = new ReturnType<T>();
-            var item = await _context.Set<T>().FirstOrDefaultAsync(express);
-            data.Patch(item);
-
-            await _context.SaveChangesAsync();
-            var info = _context.Set<T>().AsNoTracking().Where(express).ToList();
-            Msg.ErrCode = 0;
-            Msg.ErrMsg = "success";
-            Msg.Data = info;
-            return Msg;
-        }
-
-        /// <summary>
-        /// 数据返回类型封装
-        /// </summary>
-        /// <typeparam name="T">泛型</typeparam>
-        /// <param name="value">数据集合</param>
-        /// <returns></returns>
-        public ReturnType<T> GetFormat<T>(List<T> value) where T : class
-        {
-            ReturnType<T> Msg = new ReturnType<T>();
-            if (value.FirstOrDefault() == null)
-            {
-                Msg.ErrCode = 10001;
-                Msg.ErrMsg = "暂无数据";
-                return Msg;
-            }
-            Msg.ErrCode = 0;
-            Msg.ErrMsg = "success";
-            Msg.Data = value;
-            return Msg;
-        }
-
-        /// <summary>
-        /// 状态返回
-        /// </summary>
-        /// <param name="errcode">返回状态(数字编号)</param>
-        /// <param name="errmsg">返回说明文字</param>
-        /// <returns></returns>
-        public static ReturnType<string> GetReturn(int errcode, string errmsg)
-        {
-            ReturnType<string> Msg = new ReturnType<string>
-            {
-                ErrCode = errcode,
-                ErrMsg = errmsg
-            };
-            return Msg;
-        }
-
-        /// <summary>
-        /// 数据返回
-        /// </summary>
-        /// <param name="errcode">返回状态(数字编号)</param>
-        /// <param name="errmsg">返回说明文字</param>
-        /// <param name="data">返回的数据</param>
-        /// <returns></returns>
-        public static ReturnTypeStr<string> GetReturn(int errcode, string errmsg, string data)
-        {
-            ReturnTypeStr<string> Msg = new ReturnTypeStr<string>
-            {
-                ErrCode = errcode,
-                ErrMsg = errmsg,
-                Data = data,
-            };
-            return Msg;
+            _http.HttpContext.Response.Headers.Add("x-data-total-count", intCount.ToString());
+            return results;
         }
     }
 }

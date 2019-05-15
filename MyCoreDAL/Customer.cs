@@ -1,4 +1,5 @@
-﻿using Nest;
+﻿using MyCoreDAL.FatherEntity;
+using Nest;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
@@ -8,15 +9,15 @@ using System.Text;
 namespace MyCoreDAL
 {
     [ElasticsearchType(IdProperty= "CustomerGuid")]
-    public class Customer : FartherEntity
+    public class Customer : FatherEntitys
     {
         //[DatabaseGenerated(DatabaseGeneratedOption.Identity)]
         public int ID { get; set; }
 
         [Key]
         [StringLength(50)]
-        public string CustomerGuid { get; set; }
-        
+        public string CustomerGuid { get; set; } = Guid.NewGuid().ToString().Replace("-", "");
+
         [StringLength(50)]
         public string CustomerName { get; set; }
         
